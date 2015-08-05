@@ -52,6 +52,7 @@ void get_cache_client() {
     cache_client = redisConnect(redis_host, redis_port);
     if (cache_client->err) {
         redisFree(cache_client);
+        cache_client=NULL;
         perror("can not client redis\n");
         exit(EXIT_FAILURE);
     } else {
@@ -63,6 +64,7 @@ void get_cache_client_r() {
     cache_client_remote = redisConnect(redis_remote_host, redis_remote_port);
     if (cache_client_remote->err) {
         redisFree(cache_client_remote);
+        cache_client_remote=NULL;
         perror("can not client remote redis\n");
         exit(EXIT_FAILURE);
     } else {
@@ -105,6 +107,7 @@ cJSON* get_addr(char* ip) {
         curl_easy_cleanup(curl);
     }
     free(request);
+    request=NULL;
     if (response_json) {
         return response_json;
     } else {
@@ -116,14 +119,13 @@ void child() {
     printf("----child----%d\n", getpid());
     get_cache_client();
     get_cache_client_r();
+    time_t now;
+    struct tm *tm_now;
+    char datetime[200];
     while (1) {
-        time_t now;
-        struct tm *tm_now;
-        char datetime[200];
         time(&now);
         tm_now = localtime(&now);
         strftime(datetime, 200, "%Y-%m-%d %H:%M:%S", tm_now);
-
         redisReply* cache_reply = (redisReply*) redisCommand(cache_client, "lpop %s", redis_queue_key);
         if (cache_reply->type == REDIS_REPLY_NIL) {
             sleep(1);
@@ -142,10 +144,9 @@ void child() {
             cJSON *name = cJSON_GetObjectItem(_service, "name");
             cJSON *banner = cJSON_GetObjectItem(_service, "banner");
             cJSON *ipAddr = get_addr(ip->valuestring); //归属地及坐标
-
-            if (ipAddr) {
+            if (ipAddr && strcmp(cJSON_Print(ipAddr),"false")!=0) {
                 cJSON *data = cJSON_GetObjectItem(ipAddr, "data");
-                if (data->type != 0) {
+                if (data->type != 0 &&strcmp(cJSON_Print(data),"[]")!=0) {
                     cJSON *country = cJSON_GetObjectItem(data->child, "country_name");
                     if (country->type != 0) {
                         if (country->valuestring == NULL) {
@@ -166,25 +167,32 @@ void child() {
                     } else {
                         cJSON_AddStringToObject(remote, "city", "-");
                     }
+                }else{
+                    cJSON_AddStringToObject(remote, "country", "-");
+                    cJSON_AddStringToObject(remote, "city", "-");
                 }
+            }else{
+                cJSON_AddStringToObject(remote, "country", "-");
+                cJSON_AddStringToObject(remote, "city", "-");
             }
             cJSON_Delete(ipAddr);
-
+            
             cJSON_AddStringToObject(remote, "ip", ip->valuestring);
-            cJSON_AddNumberToObject(remote, "port", port->valueint);
+            cJSON_AddNumberToObject(remote, "port", 111);
             cJSON_AddStringToObject(remote, "banner", banner->valuestring);
             cJSON_AddStringToObject(remote, "service", name->valuestring);
             cJSON_AddStringToObject(remote, "device", "-");
             cJSON_AddStringToObject(remote, "company", "-");
             cJSON_AddStringToObject(remote, "grab_time", datetime);
-
+            
             pack_str(&pk, cJSON_Print(remote));
             char *command;
             command = (void *) malloc(sbuf.size);
             memcpy(command, sbuf.data, sbuf.size);
+            if(strlen(command)>sbuf.size){
             char *p;
             p = command + sbuf.size;
-            memset(p, 0x00, strlen(command) - sbuf.size);
+            memset(p, 0x00, strlen(command) - sbuf.size);}
             REDIS_EXE_R("rpush %s %s", redis_remote_key, command);
             REDIS_CHECK_R(REDIS_REPLY_INTEGER);
             REDIS_FREE_R
@@ -195,8 +203,12 @@ void child() {
 //                                msgpack_object_print(stdout, deserialized);
 
             free(command);
+            command=NULL;
             msgpack_sbuffer_destroy(&sbuf);
             cJSON_Delete(remote);
+            remote=NULL;
+            cJSON_Delete(json);
+            json=NULL;
         }
         REDIS_FREE
         usleep(10000);
@@ -205,7 +217,7 @@ void child() {
 }
 
 void _child() {
-    fork();
+//    fork();
     child();
 }
 
@@ -278,6 +290,7 @@ void getDevPort(cJSON * json) {
     REDIS_CHECK(REDIS_REPLY_INTEGER);
     REDIS_FREE
     free(command);
+    command=NULL;
 }
 
 void getJSON(char * ptr) {
@@ -291,6 +304,7 @@ void getJSON(char * ptr) {
         if (_json) {
             getDevPort(_json);
             cJSON_Delete(_json);
+            _json=NULL;
             memset(half_json.string, 0x00, MAX_BUF_SIZE * 20);
             half_json.num = 0;
         }
@@ -301,9 +315,11 @@ void getJSON(char * ptr) {
             strcat(half_json.string, ptr);
             half_json.num++;
             cJSON_Delete(json);
+            json=NULL;
         } else {
             getDevPort(json);
             cJSON_Delete(json);
+            json=NULL;
         }
     }
 }
